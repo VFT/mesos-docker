@@ -4,8 +4,15 @@ Mesos+Marathon+docker集群部署
 | ---- | ---- | ---------- | ---- |
 |  1.0 | VF   | 2015-10-09 | 无   |
 |  2.0 | VF   | 2015-10-15 | 无   |
-##内容导航
-[TOC]
+##0.内容导航
+1. 整体架构
+2. 环境准备
+3. Master节点安装
+4. Slave节点安装
+5. Mesos简单实用
+6. Docker私有仓库
+7. 负载均衡与服务发现
+
 ##1.整体架构
 |     节点名称    | 节点类型 |      IP      |            组件            |
 | --------------- | -------- | ------------ | -------------------------- |
@@ -230,7 +237,7 @@ systemctl restart mesos-slave
 chkconfig docker on
 chkconfig mesos-slave on
 ```
-##5.简单使用
+##5.Mesos简单使用
 ####Mesos控制台  
 Mesos的控制台地址：`http://192.168.2.71:5050`
 Mesos的控制台上可以查看的当前的资源实用情况、Slave节点状态、当前运行的Task、完成的Task、可以切换到Framework（如Marathon）或者Slave。
@@ -298,7 +305,7 @@ python-pip install docker-registry
 4. 推送镜像到私有仓库（docker push）
 5. 获取私有仓库镜像（docker pull）
 
-##负载均衡与服务发现
+##7.负载均衡与服务发现
 ####Haproxy组件
 安装
 ```bash
