@@ -347,7 +347,11 @@ kill $(lsof -i:8000 |awk '{print $2}' | tail -n 2)
 >说明：可以用命令`netstat -ntpl`或者`lsof -i :5050 -n`查看进程
 
 ####Bamboo组件（源码编译安装）
-编译rpm二进制包  
+直接获取rpm包  
+```bash
+wget https://github.com/VFT/mesos-docker/blob/master/package/bamboo-0.2.16_1-1.x86_64.rpm
+```
+或者自主编译rpm二进制包  
 ```bash
 # build dependencies
 sudo yum install -y golang rpm-build rubygems ruby-devel
@@ -386,7 +390,7 @@ rpm -ivh bamboo-0.2.15_1-1.x86_64.rpm
 安装start-stop-daemon
 方式一直接获取
 ```bash
-
+wget https://github.com/VFT/mesos-docker/blob/master/script/init.d-bamboo-server
 ```
 方式二自主编译
 ```bash
