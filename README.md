@@ -12,6 +12,7 @@ Mesos+Marathon+docker集群部署
 5. Mesos简单实用
 6. Docker私有仓库
 7. 负载均衡与服务发现
+8. keeplived高可用（待续）
 
 ##1.整体架构
 |     节点名称    | 节点类型 |      IP      |            组件            |
@@ -24,7 +25,7 @@ Mesos+Marathon+docker集群部署
 | slave103        | slave    | 192.168.2.63 | mesos、docker              |
 | bamboo101       | 负载均衡 | 192.168.2.91 | haproxy、bamboo、keeplived |
 | bamboo102       | 负载均衡 | 192.168.2.92 | haproxy、bamboo、keeplived |
-| bamboo103       | 负载均衡 | 192.168.2.93 | haproxy、bamboo、keeplived |
+| bamboo103       | 负载均衡 | 192.168.2.93 | haproxy、bamboo、keeplived |  
 >说明：集群模式部署，master节点应该是奇数，最少为3个节点，便于leader选举
 
 ##2.环境准备
@@ -117,6 +118,7 @@ mkdir -p /etc/marathon/conf
 直接复制mesos的hostname文件
 ```bash
 cp /etc/mesos-master/hostname /etc/marathon/conf
+echo http_callback > /etc/marathon/conf/event_subscriber
 ```
 ####配置marathon使用zookeeper（可选）  
 默认情况下marathon会自动获取本机的mesos的zk配置，并且会根据zookeeper的配置。为自己添加marathon的配置同步，手动添加以下配置文件是为了便于管理，同样，其他的marathon参数，都可以以参数名称命名一个文件，存放在/etc/marathon/conf目录下，然后在其中设置参数值的形式为marathon作进一步配置
@@ -323,6 +325,7 @@ sysctl -e net.ipv4.ip_nonlocal_bind=1
 ```
 重启haproxy服务
 ```bash
+chkconfig haproxy on
 systemctl restart haproxy
 ```
 ####Bamboo组件
@@ -333,37 +336,6 @@ mkdir /var/bamboo
 cp /opt/bamboo/config/haproxy_template.cfg /var/bamboo/
 cp /opt/bamboo/config/production.example.json /var/bamboo/production.json
 ```
-编辑/var/bamboo/production.json内容如下：
-```bash
-{
-  "Marathon": {
-    "Endpoint": "http://192.168.2.71:8080,http://192.168.2.72:8080,http://192.168.2.73:8080"
-  },
-
-  "Bamboo": {
-    "Host": "http://192.168.2.98:8000",
-    "Zookeeper": {
-      "Host": "192.168.2.71:2181,192.168.2.72:2181,192.168.2.73:2181",
-      "Path": "/marathon-haproxy/state",
-      "ReportingDelay": 5
-    }
-  },
-  "HAProxy": {
-    "TemplatePath": "/var/bamboo/haproxy_template.cfg",
-    "OutputPath": "/etc/haproxy/haproxy.cfg",
-    "ReloadCommand": "haproxy -f /etc/haproxy/haproxy.cfg -p /var/run/haproxy.pid -D -sf $(cat /var/run/haproxy.pid)",
-    "ReloadValidationCommand": "haproxy -c -f {{.}}",
-    "ReloadCleanupCommand": "exit 0"
-  },
-  "StatsD": {
-    "Enabled": false,
-    "Host": "localhost:8125",
-    "Prefix": "bamboo-server.production."
-  }
-}
-```
->说明：Marathon.Endpoint：Marathon服务的访问地址，Bamboo.Host：Bamboo服务控制台地址，Bamboo.Zookeeper.Host：Zookeeper服务访问地址
-
 启动Bamboo服务
 ```bash
 nohup /opt/bamboo/bamboo -haproxy_check -config="/var/bamboo/production.json" &
@@ -374,17 +346,58 @@ kill $(lsof -i:8000 |awk '{print $2}' | tail -n 2)
 ```
 >说明：可以用命令`netstat -ntpl`或者`lsof -i :5050 -n`查看进程
 
-####Bamboo组件（源码安装）
-安装start-stop-daemon
+####Bamboo组件（源码编译安装）
+编译rpm二进制包  
 ```bash
-yum install gcc
+# build dependencies
+sudo yum install -y golang rpm-build rubygems ruby-devel
+sudo gem install  fpm  --no-ri --no-rdoc
+# setup a go build tree
+sudo yum install -y git mercurial
+export GOPATH=~/gopath
+mkdir $GOPATH
+go get github.com/tools/godep
+go install github.com/tools/godep
+# build the binary
+# get newest source code
+go get github.com/QubitProducts/bamboo
+cd ${GOPATH}/src/github.com/QubitProducts/bamboo
+# or get a specil version source code，such as：
+# wget https://github.com/QubitProducts/bamboo/archive/v0.2.15.tar.gz
+# tar xzvf v0.2.15.tar.gz
+# cd bamboo-0.2.15/
+go build
+
+# edit builder/build.after-install
+sed -i '10,15s/configure)/*)/g' builder/build.after-install
+
+# edit builder/build.sh
+sed -i 's/version=${_BAMBOO_VERSION:-"1.0.0"}/version=${_BAMBOO_VERSION:-"0.2.15"}/g' builder/build.sh
+sed -i 's/arch="all"/arch="x86_64"/g' builder/build.sh
+sed -i 's/pkgtype=${_PKGTYPE:-"deb"}/pkgtype=${_PKGTYPE:-"rpm"}/g' builder/build.sh
+
+#运行命令生成rpm包，输出到output目录
+./builder/build.sh
+
+#安装rpm包
+rpm -ivh bamboo-0.2.15_1-1.x86_64.rpm
+```
+
+安装start-stop-daemon
+方式一直接获取
+```bash
+
+```
+方式二自主编译
+```bash
+yum install -y gcc wget
 wget http://developer.axis.com/download/distribution/apps-sys-utils-start-stop-daemon-IR1_9_18-2.tar.gz
 tar zxf apps-sys-utils-start-stop-daemon-IR1_9_18-2.tar.gz
 cd apps/sys-utils/start-stop-daemon-IR1_9_18-2/
 gcc start-stop-daemon.c -o start-stop-daemon
 cp start-stop-daemon /usr/bin
 ```
-下载及安装bamboo源码包
+配置bamboo-server启动（脚本位于源码包中）
 ```bash
 wget https://github.com/QubitProducts/bamboo/archive/v0.2.14.tar.gz
 tar xzvf v0.2.14.tar.gz
@@ -394,45 +407,47 @@ chown root:root /etc/init.d/bamboo-server
 chmod 755 /etc/init.d/bamboo-server
 chkconfig bamboo-server on
 ```
-配置bamboo
-```bash
-mkdir /var/bamboo
-cp config/haproxy_template.cfg /var/bamboo/
-cp config/production.example.json /var/bamboo/production.json
-```
 修改/var/bamboo/production.json
 ```json
 {
   "Marathon": {
-    "Endpoint": "http://192.168.2.71:8080,http://192.168.2.72:8080,http://192.168.2.73:8080"
+    "Endpoint": "http://192.168.2.71:8080,http://192.168.2.72:8080,http://192.168.2.73:8080",
+    "UseEventStream": true
   },
 
   "Bamboo": {
-    "Host": "http://192.168.2.98:8000",
+    "Endpoint": "http://192.168.2.93:8000",
     "Zookeeper": {
       "Host": "192.168.2.71:2181,192.168.2.72:2181,192.168.2.73:2181",
       "Path": "/marathon-haproxy/state",
       "ReportingDelay": 5
     }
   },
+
   "HAProxy": {
     "TemplatePath": "/var/bamboo/haproxy_template.cfg",
     "OutputPath": "/etc/haproxy/haproxy.cfg",
-    "ReloadCommand": "haproxy -f /etc/haproxy/haproxy.cfg -p /var/run/haproxy.pid -D -sf $(cat /var/run/haproxy.pid)"
-    "ReloadValidationCommand": "haproxy -c -f {{.}}",
-    "ReloadCleanupCommand": "exit 0"
+    "ReloadCommand": "haproxy -f /etc/haproxy/haproxy.cfg -p /var/run/haproxy.pid -D -sf $(cat /var/run/haproxy.pid)",
+    "ReloadValidationCommand": "haproxy -c -f {{.}}"
   },
+
   "StatsD": {
     "Enabled": false,
     "Host": "localhost:8125",
-    "Prefix": "bamboo-server.development."
+    "Prefix": "bamboo-server.production."
   }
 }
+```
+>说明：Marathon.Endpoint：Marathon服务的访问地址，Bamboo.Host：Bamboo服务控制台地址，Bamboo.Zookeeper.Host：Zookeeper服务访问地址
+
+修改/var/bamboo/haproxy_template.cfg  
+```bash
+stats socket /run/haproxy/admin.sock mode 660 level admin  >>   stats socket /var/lib/haproxy/stats
 ```
 启动Bamboo服务  
 `systemctl start bamboo-server`  
 停止Bamboo服务  
-`systemctl start bamboo-server`  
+`systemctl stop bamboo-server`  
 ####Bamboo简单使用
 按上述配置Bamboo安装后以后，Bamboo监听`8000`端口，可以通过`http://<IP>:8000`来访问bamboo的控制台  
 ![bamboo console](https://raw.githubusercontent.com/VFT/imageStore/master/bamboo01.png)  
@@ -440,3 +455,27 @@ cp config/production.example.json /var/bamboo/production.json
 ![bamboo edit](https://raw.githubusercontent.com/VFT/imageStore/master/bamboo02.png)  
 现在，可以通过`http://<IP>`，默认端口：`80`来访问`inky1`这个app。
 
+##8.疑难杂症
+####内存不足
+- 表现：无法发布app应用，marathon日志中关键提示`mem NOT SATISFIED`
+- 分析：free命令查看宿主机内存使用率
+```bash
+[root@slave101 ~]# free -h
+              total        used        free      shared  buff/cache   available
+Mem:           1.8G        339M        261M         24M        1.2G        1.2G
+Swap:          2.0G         76K        2.0G
+```
+可以看出，空闲内存不足，基本都是被cache占用，而marathon识别内存时是从free中识别
+- 解决：手动释放内存
+```bash
+sync
+echo 3 > /proc/sys/vm/drop_caches
+sysctl -p
+```
+查看内存情况：
+```bash
+[root@salve102 ~]# free -h
+              total        used        free      shared  buff/cache   available
+Mem:           1.8G        441M        1.2G         24M        167M        1.2G
+Swap:          2.0G        108K        2.0G
+```
