@@ -439,3 +439,4 @@ cp config/production.example.json /var/bamboo/production.json
 添加转发规则  
 ![bamboo edit](https://raw.githubusercontent.com/VFT/imageStore/master/bamboo02.png)  
 现在，可以通过`http://<IP>`，默认端口：`80`来访问`inky1`这个app。
+
